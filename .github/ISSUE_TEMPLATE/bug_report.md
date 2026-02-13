@@ -3,7 +3,6 @@ name: Bug report
 about: Create a report to help me improve the addon
 title: '[Bug] '
 labels: ''
-assignees: Lauloque
 
 ---
 
@@ -15,6 +14,11 @@ Graphics card:
 Broken:
 (example: 2.79b release)
 (example: 2.80, edbf15d3c044, blender2.8, 2018-11-28, as found on the splash screen)
+Worked: (optional)
+
+**Addon Version**
+Broken:
+(example: 1.5.0)
 Worked: (optional)
 
 **Short description of error**
