@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-from typing import List, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional
 import bpy
 from bpy_extras import anim_utils
-from bpy.types import Context, PoseBone, Bone
+from bpy.types import Action, ActionSlot, Context, Object, PoseBone
 from .bl_logger import logger
 # from .progress_bar import (
 #     init_progress,
@@ -11,6 +12,14 @@ from .bl_logger import logger
 # )
 
 BLENDER_5_0_OR_LATER = bpy.app.version >= (5, 0, 0)
+
+
+@dataclass(frozen=True)
+class ActionAssignment:
+    """An action/slot pair that should be converted for an armature."""
+    action: Action
+    slot: Optional[ActionSlot]
+    label: str
 
 
 def get_bone_select(pose_bone: PoseBone) -> bool:
@@ -37,33 +46,24 @@ def dprint(message: str) -> None:
         logger.debug(message)
 
 
-def get_list_frames(bone: Bone) -> List[float]:
+def get_list_frames_from_action(
+    action: Optional[Action],
+    slot: Optional[ActionSlot]
+) -> List[float]:
     """
-    Returns the list of frames with rotation keyframes on the selected bones
+    Return the frames that contain rotation keyframes for an action slot.
     """
-    # context = bpy.context
     list_frames: List[float] = []
 
-    armature = bone.id_data
-    # ----FOR FUTURE MULTIBONE SUPPORT----
-    # list_armatures = []
-    # selected_pose_bones = context.selected_pose_bones
-    # for bone in selected_pose_bones:
-    #     armature = bone.id_data
-    #     if armature not in list_armatures:
-    #         list_armatures.append(armature)
-    # for armature in list_armatures:
-
-    ad = armature.animation_data
-    slot = ad.action_slot
+    if action is None or slot is None:
+        return list_frames
 
     if BLENDER_5_0_OR_LATER:
-        bag = anim_utils.action_ensure_channelbag_for_slot(ad.action, slot)
+        bag = anim_utils.action_ensure_channelbag_for_slot(action, slot)
     else:
-        bag = anim_utils.action_get_channelbag_for_slot(ad.action, slot)
-        if bag == None:
+        bag = anim_utils.action_get_channelbag_for_slot(action, slot)
+        if bag is None:
             return list_frames
-
 
     fcurves = bag.fcurves
 
@@ -80,6 +80,124 @@ def get_list_frames(bone: Bone) -> List[float]:
                 list_frames.append(frame)
 
     return sorted(list_frames)
+
+
+def get_list_frames(bone: PoseBone) -> List[float]:
+    """Return frames with rotation keyframes on the armature's active action."""
+    armature = bone.id_data
+    ad = armature.animation_data
+
+    if ad is None or ad.action is None:
+        return []
+
+    return get_list_frames_from_action(ad.action, ad.action_slot)
+
+
+def iter_nla_strips(strips: Iterable[Any]) -> Iterable[Any]:
+    """Yield NLA strips recursively so meta strips are also covered."""
+    for strip in strips:
+        yield strip
+        child_strips = getattr(strip, "strips", None)
+        if child_strips is not None and len(child_strips) > 0:
+            yield from iter_nla_strips(child_strips)
+
+
+def collect_armature_action_assignments(armature: Object) -> List[ActionAssignment]:
+    """Collect unique actions that are attached to an armature."""
+    ad = armature.animation_data
+    if ad is None:
+        return []
+
+    assignments: List[ActionAssignment] = []
+    seen = set()
+
+    def add_assignment(
+        action: Optional[Action],
+        slot: Optional[ActionSlot],
+        label: str
+    ) -> None:
+        if action is None:
+            return
+
+        key = (
+            action.name_full,
+            slot.identifier if slot is not None else "",
+        )
+        if key in seen:
+            return
+
+        seen.add(key)
+        assignments.append(ActionAssignment(action, slot, label))
+
+    add_assignment(ad.action, ad.action_slot, "active action")
+
+    for track in ad.nla_tracks:
+        for strip in iter_nla_strips(track.strips):
+            add_assignment(
+                getattr(strip, "action", None),
+                getattr(strip, "action_slot", None),
+                f"NLA strip '{strip.name}'",
+            )
+
+    return assignments
+
+
+def store_armature_animation_state(armature: Object) -> Dict[str, Any]:
+    """Capture the armature animation state so it can be restored later."""
+    ad = armature.animation_data
+    if ad is None:
+        return {}
+
+    return {
+        "action": ad.action,
+        "action_slot": ad.action_slot,
+        "use_nla": ad.use_nla,
+    }
+
+
+def restore_armature_animation_state(
+    armature: Object,
+    state: Dict[str, Any]
+) -> None:
+    """Restore the armature animation state after conversion."""
+    ad = armature.animation_data
+    if ad is None or not state:
+        return
+
+    ad.use_nla = state["use_nla"]
+    ad.action = state["action"]
+
+    stored_slot = state["action_slot"]
+    if stored_slot is not None and ad.action is not None:
+        try:
+            ad.action_slot = stored_slot
+        except Exception as exc:
+            dprint(f"Unable to restore action slot: {exc}")
+
+    bpy.context.scene.frame_set(bpy.context.scene.frame_current)
+
+
+def activate_armature_action_assignment(
+    armature: Object,
+    assignment: ActionAssignment
+) -> None:
+    """Make an action assignment the active source for conversion."""
+    ad = armature.animation_data
+    if ad is None:
+        raise RuntimeError("Armature has no animation data to activate.")
+
+    ad.use_nla = False
+    ad.action = assignment.action
+
+    if assignment.slot is not None:
+        try:
+            ad.action_slot = assignment.slot
+        except Exception as exc:
+            raise RuntimeError(
+                f"Unable to activate slot for '{assignment.action.name}': {exc}"
+            ) from exc
+
+    bpy.context.scene.frame_set(bpy.context.scene.frame_current)
 
 
 def deselect_all_bones() -> None:
@@ -241,7 +359,11 @@ def convert_frame_rotation(context: Context, bone: PoseBone, original_rmode: str
     logger.debug(f" |  # Keyframed '{bone_name}' rotations")
 
 
-def process_bone_conversion(context: Context, bone: PoseBone) -> None:
+def process_bone_conversion(
+    context: Context,
+    bone: PoseBone,
+    list_frames: Optional[List[float]] = None,
+) -> None:
     """Process the complete conversion for a single bone."""
     CRM_Properties = context.scene.CRM_Properties
     scene = context.scene
@@ -251,7 +373,15 @@ def process_bone_conversion(context: Context, bone: PoseBone) -> None:
     dprint(f" # Target Rmode will be {CRM_Properties.targetRmode}")
 
     locks = prepare_bone_locks(bone)
-    list_frames = get_list_frames(bone)
+    if list_frames is None:
+        list_frames = get_list_frames(bone)
+
+    if not list_frames:
+        logger.debug(f" # No rotation keyframes found on '{bone.name}'.")
+        if CRM_Properties.preserveLocks:
+            toggle_rotation_locks(bone, 'ON', locks)
+        return
+
     original_rmode = setup_initial_keyframe(bone, list_frames[0])
 
     # Process each frame in the frames list
@@ -277,21 +407,17 @@ def process_bone_conversion(context: Context, bone: PoseBone) -> None:
     logger.debug(f" # No more keyframes on '{bone.name}'.#")
 
 
-def init_progress(context: Context, total_bones: int) -> None:
+def init_progress(context: Context, total_steps: int) -> None:
     """Initialize the progress tracking."""
     global _progress_counter
-    scene = context.scene
-
-    # Calculate total frames
-    total_frames = scene.frame_end - scene.frame_start + 1
-    progress_max = total_bones * total_frames
+    progress_max = total_steps
 
     # Safety checks
     if progress_max <= 0:
         dprint(
             f"Warning: Invalid progress_max ({progress_max}). Using fallback."
         )
-        progress_max = total_bones  # Fallback to just bone count
+        progress_max = 1
 
     _progress_counter = 0
 
@@ -345,7 +471,7 @@ def restore_initial_state(context: Context) -> None:
 
     if CRM_Properties.jumpInitFrame:
         initial_frame = scene.get('crm_initial_frame', 1)
-        context.scene.frame_current = initial_frame
+        context.scene.frame_set(int(initial_frame))
 
     if CRM_Properties.preserveSelection:
         # Restore selection from stored bone names
