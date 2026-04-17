@@ -2,44 +2,10 @@
 import bpy
 from bpy.props import (
     BoolProperty,
-    CollectionProperty,
     EnumProperty,
-    StringProperty,
 )
 from bpy.types import PropertyGroup
-
-
-class CRM_ActionSelectionItem(PropertyGroup):
-    identifier: StringProperty(
-        name="Identifier",
-        description="Internal identifier for an action/slot pair.",
-    )
-
-    action_name: StringProperty(
-        name="Action Name",
-        description="The Blender action datablock name.",
-    )
-
-    slot_identifier: StringProperty(
-        name="Slot Identifier",
-        description="The Blender action slot identifier.",
-    )
-
-    display_name: StringProperty(
-        name="Display Name",
-        description="Friendly name shown in the UI.",
-    )
-
-    source_label: StringProperty(
-        name="Source Label",
-        description="Where this action assignment was discovered.",
-    )
-
-    selected: BoolProperty(
-        name="Convert",
-        description="Convert this action when running the operator.",
-        default=True,
-    )
+from .utils import get_action_enum_items
 
 
 class CRM_Props(PropertyGroup):
@@ -77,11 +43,12 @@ class CRM_Props(PropertyGroup):
         default=True
     )
 
-    actionSelectionOwner: StringProperty(
-        name="Action Selection Owner",
-        description="Internal armature name used to keep action lists in sync.",
-        default="",
-        options={'HIDDEN'},
+    selectedActions: EnumProperty(
+        name="Actions To Convert",
+        description=(
+            "Choose which attached actions to convert. "
+            "If none are checked, Convert! will use all listed actions."
+        ),
+        items=get_action_enum_items,
+        options={'ENUM_FLAG'},
     )
-
-    actionSelections: CollectionProperty(type=CRM_ActionSelectionItem)

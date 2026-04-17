@@ -5,6 +5,7 @@ from bpy.types import Operator
 from bpy.types import Context
 from .utils import (
     activate_armature_action_assignment,
+    collect_armature_action_assignments,
     dprint,
     get_selected_action_assignments,
     get_list_frames_from_action,
@@ -13,7 +14,6 @@ from .utils import (
     store_initial_state,
     store_armature_animation_state,
     restore_initial_state,
-    sync_action_selection_state,
     init_progress,
     finish_progress,
     is_any_pose_bone_selected,
@@ -48,7 +48,7 @@ class CRM_OT_convert_rotation_mode(Operator):
             bone.name for bone in context.selected_pose_bones
         ]
         bone_count = len(selected_bone_names)
-        action_assignments = sync_action_selection_state(context.scene, armature)
+        action_assignments = collect_armature_action_assignments(armature)
 
         dprint(
             f"Starting conversion for {bone_count} bones: "

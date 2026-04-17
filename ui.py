@@ -2,7 +2,12 @@
 import bpy
 from bpy.types import Panel
 from bpy.types import Context
-from .utils import is_any_pose_bone_selected, sync_action_selection_state
+from .utils import (
+    collect_armature_action_assignments,
+    get_action_assignment_display_name,
+    get_action_assignment_identifier,
+    is_any_pose_bone_selected,
+)
 from .bl_logger import logger
 
 
@@ -23,7 +28,21 @@ class VIEW3D_PT_convert_rotation_mode(Panel):
             if context.object and context.object.type == 'ARMATURE'
             else None
         )
-        action_assignments = sync_action_selection_state(scene, armature)
+        action_assignments = (
+            collect_armature_action_assignments(armature)
+            if armature is not None
+            else []
+        )
+        available_action_ids = {
+            get_action_assignment_identifier(
+                assignment.action,
+                assignment.slot,
+            )
+            for assignment in action_assignments
+        }
+        selected_action_ids = (
+            set(CRM_Properties.selectedActions) & available_action_ids
+        )
 
         col = layout.column(align=True)
         col.label(text="Target Rotation Mode")
@@ -37,13 +56,28 @@ class VIEW3D_PT_convert_rotation_mode(Panel):
         elif not action_assignments:
             action_box.label(text="No attached actions found.", icon="ERROR")
         else:
-            for item in CRM_Properties.actionSelections:
+            for assignment in action_assignments:
+                identifier = get_action_assignment_identifier(
+                    assignment.action,
+                    assignment.slot,
+                )
                 row = action_box.row(align=True)
-                row.prop(item, "selected", text=item.display_name)
-                row.label(text=item.source_label)
+                row.prop_enum(
+                    CRM_Properties,
+                    "selectedActions",
+                    identifier,
+                    text=get_action_assignment_display_name(
+                        assignment.action,
+                        assignment.slot,
+                    ),
+                )
+                row.label(text=assignment.label)
 
-            if not any(item.selected for item in CRM_Properties.actionSelections):
-                action_box.label(text="Select at least one action.", icon="ERROR")
+            if not selected_action_ids:
+                action_box.label(
+                    text="No actions checked: Convert! will use all listed actions.",
+                    icon="INFO",
+                )
 
         if not is_any_pose_bone_selected():
             col = layout.column(align=True)

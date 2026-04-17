@@ -23,6 +23,7 @@ class ActionAssignment:
 
 
 ACTION_ASSIGNMENT_SEPARATOR = "::crm::"
+_action_enum_items_cache: List[tuple] = []
 
 
 def get_bone_select(pose_bone: PoseBone) -> bool:
@@ -86,12 +87,6 @@ def get_action_assignment_display_name(
         return action.name
 
     return f"{action.name} [{normalized_slot.name_display}]"
-
-
-def clear_action_selections(action_selections: Any) -> None:
-    """Remove every item from the action selection collection."""
-    while len(action_selections) > 0:
-        action_selections.remove(len(action_selections) - 1)
 
 
 def action_slot_targets_armature(
@@ -219,47 +214,43 @@ def collect_armature_action_assignments(armature: Object) -> List[ActionAssignme
     return assignments
 
 
-def sync_action_selection_state(scene: Any, armature: Optional[Object]) -> List[ActionAssignment]:
-    """Rebuild the UI action list for the active armature while keeping choices."""
-    CRM_Properties = scene.CRM_Properties
-    action_selections = CRM_Properties.actionSelections
+def get_action_enum_items(
+    _self: Any,
+    context: Optional[Context],
+) -> List[tuple]:
+    """Return enum items for the action picker in the UI."""
+    global _action_enum_items_cache
 
-    if armature is None or armature.type != 'ARMATURE':
-        clear_action_selections(action_selections)
-        CRM_Properties.actionSelectionOwner = ""
-        return []
+    armature = None
+    if context is not None and context.object and context.object.type == 'ARMATURE':
+        armature = context.object
+
+    if armature is None:
+        _action_enum_items_cache = []
+        return _action_enum_items_cache
 
     assignments = collect_armature_action_assignments(armature)
-    owner_name = armature.name_full
-    preserve_state = CRM_Properties.actionSelectionOwner == owner_name
-    previous_selection = {}
+    enum_items = []
 
-    if preserve_state:
-        previous_selection = {
-            item.identifier: item.selected for item in action_selections
-        }
-
-    clear_action_selections(action_selections)
-
-    for assignment in assignments:
-        item = action_selections.add()
-        item.identifier = get_action_assignment_identifier(
-            assignment.action,
-            assignment.slot,
+    for index, assignment in enumerate(assignments):
+        enum_items.append(
+            (
+                get_action_assignment_identifier(
+                    assignment.action,
+                    assignment.slot,
+                ),
+                get_action_assignment_display_name(
+                    assignment.action,
+                    assignment.slot,
+                ),
+                assignment.label,
+                'ACTION',
+                1 << index,
+            )
         )
-        item.action_name = assignment.action.name_full
-        item.slot_identifier = (
-            assignment.slot.identifier if assignment.slot is not None else ""
-        )
-        item.display_name = get_action_assignment_display_name(
-            assignment.action,
-            assignment.slot,
-        )
-        item.source_label = assignment.label
-        item.selected = previous_selection.get(item.identifier, True)
 
-    CRM_Properties.actionSelectionOwner = owner_name
-    return assignments
+    _action_enum_items_cache = enum_items
+    return _action_enum_items_cache
 
 
 def get_selected_action_assignments(
@@ -267,15 +258,24 @@ def get_selected_action_assignments(
     armature: Object,
     action_assignments: Optional[List[ActionAssignment]] = None,
 ) -> List[ActionAssignment]:
-    """Return only the armature actions that are checked in the UI."""
+    """
+    Return the explicitly checked actions, or all actions if none are checked.
+    """
     if action_assignments is None:
-        action_assignments = sync_action_selection_state(scene, armature)
+        action_assignments = collect_armature_action_assignments(armature)
 
-    selected_identifiers = {
-        item.identifier
-        for item in scene.CRM_Properties.actionSelections
-        if item.selected
+    available_identifiers = {
+        get_action_assignment_identifier(
+            assignment.action,
+            assignment.slot,
+        )
+        for assignment in action_assignments
     }
+    selected_identifiers = (
+        set(scene.CRM_Properties.selectedActions) & available_identifiers
+    )
+    if not selected_identifiers:
+        return action_assignments
 
     return [
         assignment
