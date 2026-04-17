@@ -17,7 +17,7 @@ def register():
         # Move only the internal imports used by this GUI-mode-only zone
         # e.g. from . import ui, panels, gpu_stuff
         from .operators import CRM_OT_convert_rotation_mode
-        from .properties import CRM_Props
+        from .properties import CRM_ActionSelectionItem, CRM_Props
         from .ui import (
             VIEW3D_PT_convert_rotation_mode,
             VIEW3D_PT_Rmodes_recommendations,
@@ -26,6 +26,7 @@ def register():
         from .preferences import AddonPreferences
 
         _classes = (
+            CRM_ActionSelectionItem,
             CRM_Props,
             CRM_OT_convert_rotation_mode,
             VIEW3D_PT_convert_rotation_mode,

@@ -5,14 +5,15 @@ from bpy.types import Operator
 from bpy.types import Context
 from .utils import (
     activate_armature_action_assignment,
-    collect_armature_action_assignments,
     dprint,
+    get_selected_action_assignments,
     get_list_frames_from_action,
     process_bone_conversion,
     restore_armature_animation_state,
     store_initial_state,
     store_armature_animation_state,
     restore_initial_state,
+    sync_action_selection_state,
     init_progress,
     finish_progress,
     is_any_pose_bone_selected,
@@ -21,11 +22,11 @@ from .bl_logger import logger
 
 
 class CRM_OT_convert_rotation_mode(Operator):
-    """Convert the selected pose bones across all actions on the armature."""
+    """Convert the selected pose bones across the checked armature actions."""
     bl_idname = "crm.convert_rotation_mode"
     bl_label = "Convert Rotation Mode"
     bl_description = (
-        "Convert the selected bones' rotation mode on every action "
+        "Convert the selected bones' rotation mode on the checked actions "
         "attached to the armature."
     )
     bl_options = {'UNDO', 'INTERNAL'}
@@ -39,7 +40,7 @@ class CRM_OT_convert_rotation_mode(Operator):
         return is_pose_mode and has_selected_bones
 
     def execute(self, context: Context) -> Set[str]:
-        """Convert selected bones on every action attached to the armature."""
+        """Convert selected bones on the checked actions for the armature."""
 
         armature = context.object
         target_rmode = context.scene.CRM_Properties.targetRmode
@@ -47,7 +48,7 @@ class CRM_OT_convert_rotation_mode(Operator):
             bone.name for bone in context.selected_pose_bones
         ]
         bone_count = len(selected_bone_names)
-        action_assignments = collect_armature_action_assignments(armature)
+        action_assignments = sync_action_selection_state(context.scene, armature)
 
         dprint(
             f"Starting conversion for {bone_count} bones: "
@@ -58,8 +59,21 @@ class CRM_OT_convert_rotation_mode(Operator):
             self.report({"WARNING"}, "No actions are attached to this armature.")
             return {'CANCELLED'}
 
+        selected_action_assignments = get_selected_action_assignments(
+            context.scene,
+            armature,
+            action_assignments,
+        )
+
+        if not selected_action_assignments:
+            self.report(
+                {"WARNING"},
+                "Select at least one action to convert in the addon panel.",
+            )
+            return {'CANCELLED'}
+
         assignments_with_frames = []
-        for assignment in action_assignments:
+        for assignment in selected_action_assignments:
             list_frames = get_list_frames_from_action(
                 assignment.action,
                 assignment.slot,
@@ -76,7 +90,7 @@ class CRM_OT_convert_rotation_mode(Operator):
         if not assignments_with_frames:
             self.report(
                 {"WARNING"},
-                "No attached actions contain rotation keyframes to convert.",
+                "The selected actions do not contain rotation keyframes to convert.",
             )
             return {'CANCELLED'}
 

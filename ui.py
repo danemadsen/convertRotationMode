@@ -2,7 +2,7 @@
 import bpy
 from bpy.types import Panel
 from bpy.types import Context
-from .utils import is_any_pose_bone_selected
+from .utils import is_any_pose_bone_selected, sync_action_selection_state
 from .bl_logger import logger
 
 
@@ -18,10 +18,32 @@ class VIEW3D_PT_convert_rotation_mode(Panel):
 
         scene = context.scene
         CRM_Properties = scene.CRM_Properties
+        armature = (
+            context.object
+            if context.object and context.object.type == 'ARMATURE'
+            else None
+        )
+        action_assignments = sync_action_selection_state(scene, armature)
 
         col = layout.column(align=True)
         col.label(text="Target Rotation Mode")
         col.prop(CRM_Properties, "targetRmode", text="")
+
+        action_box = layout.box()
+        action_box.label(text="Actions To Convert")
+
+        if armature is None:
+            action_box.label(text="Select an armature to list its actions.")
+        elif not action_assignments:
+            action_box.label(text="No attached actions found.", icon="ERROR")
+        else:
+            for item in CRM_Properties.actionSelections:
+                row = action_box.row(align=True)
+                row.prop(item, "selected", text=item.display_name)
+                row.label(text=item.source_label)
+
+            if not any(item.selected for item in CRM_Properties.actionSelections):
+                action_box.label(text="Select at least one action.", icon="ERROR")
 
         if not is_any_pose_bone_selected():
             col = layout.column(align=True)

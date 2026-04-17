@@ -22,6 +22,9 @@ class ActionAssignment:
     label: str
 
 
+ACTION_ASSIGNMENT_SEPARATOR = "::crm::"
+
+
 def get_bone_select(pose_bone: PoseBone) -> bool:
     """Get selection state of a bone for either Blender 4.5 or 5.0+"""
     if BLENDER_5_0_OR_LATER:
@@ -46,6 +49,73 @@ def dprint(message: str) -> None:
         logger.debug(message)
 
 
+def normalize_action_slot(
+    action: Optional[Action],
+    slot: Optional[ActionSlot]
+) -> Optional[ActionSlot]:
+    """Prefer the explicit slot, or the only slot on the action when obvious."""
+    if slot is not None or action is None:
+        return slot
+
+    slots = getattr(action, "slots", None)
+    if slots is not None and len(slots) == 1:
+        return slots[0]
+
+    return None
+
+
+def get_action_assignment_identifier(
+    action: Action,
+    slot: Optional[ActionSlot]
+) -> str:
+    """Return a stable identifier for an action/slot pair."""
+    normalized_slot = normalize_action_slot(action, slot)
+    return (
+        f"{action.name_full}{ACTION_ASSIGNMENT_SEPARATOR}"
+        f"{normalized_slot.identifier if normalized_slot is not None else ''}"
+    )
+
+
+def get_action_assignment_display_name(
+    action: Action,
+    slot: Optional[ActionSlot]
+) -> str:
+    """Return a readable label for an action/slot pair."""
+    normalized_slot = normalize_action_slot(action, slot)
+    if normalized_slot is None:
+        return action.name
+
+    return f"{action.name} [{normalized_slot.name_display}]"
+
+
+def clear_action_selections(action_selections: Any) -> None:
+    """Remove every item from the action selection collection."""
+    while len(action_selections) > 0:
+        action_selections.remove(len(action_selections) - 1)
+
+
+def action_slot_targets_armature(
+    slot: ActionSlot,
+    armature: Object
+) -> bool:
+    """Return whether the slot is explicitly linked to this armature."""
+    users = getattr(slot, "users", None)
+    if not callable(users):
+        return False
+
+    try:
+        for user in users():
+            if user == armature:
+                return True
+
+            if getattr(user, "name_full", "") == armature.name_full:
+                return True
+    except Exception as exc:
+        dprint(f"Unable to inspect slot users for '{slot.identifier}': {exc}")
+
+    return False
+
+
 def get_list_frames_from_action(
     action: Optional[Action],
     slot: Optional[ActionSlot]
@@ -54,6 +124,7 @@ def get_list_frames_from_action(
     Return the frames that contain rotation keyframes for an action slot.
     """
     list_frames: List[float] = []
+    slot = normalize_action_slot(action, slot)
 
     if action is None or slot is None:
         return list_frames
@@ -105,9 +176,6 @@ def iter_nla_strips(strips: Iterable[Any]) -> Iterable[Any]:
 def collect_armature_action_assignments(armature: Object) -> List[ActionAssignment]:
     """Collect unique actions that are attached to an armature."""
     ad = armature.animation_data
-    if ad is None:
-        return []
-
     assignments: List[ActionAssignment] = []
     seen = set()
 
@@ -119,27 +187,104 @@ def collect_armature_action_assignments(armature: Object) -> List[ActionAssignme
         if action is None:
             return
 
-        key = (
-            action.name_full,
-            slot.identifier if slot is not None else "",
-        )
+        slot = normalize_action_slot(action, slot)
+
+        key = get_action_assignment_identifier(action, slot)
         if key in seen:
             return
 
         seen.add(key)
         assignments.append(ActionAssignment(action, slot, label))
 
-    add_assignment(ad.action, ad.action_slot, "active action")
+    if ad is not None:
+        add_assignment(ad.action, ad.action_slot, "Active action")
 
-    for track in ad.nla_tracks:
-        for strip in iter_nla_strips(track.strips):
-            add_assignment(
-                getattr(strip, "action", None),
-                getattr(strip, "action_slot", None),
-                f"NLA strip '{strip.name}'",
-            )
+        for track in ad.nla_tracks:
+            for strip in iter_nla_strips(track.strips):
+                add_assignment(
+                    getattr(strip, "action", None),
+                    getattr(strip, "action_slot", None),
+                    f"NLA strip '{strip.name}'",
+                )
+
+    for action in bpy.data.actions:
+        slots = getattr(action, "slots", None)
+        if slots is None:
+            continue
+
+        for slot in slots:
+            if action_slot_targets_armature(slot, armature):
+                add_assignment(action, slot, "Action slot linked to armature")
 
     return assignments
+
+
+def sync_action_selection_state(scene: Any, armature: Optional[Object]) -> List[ActionAssignment]:
+    """Rebuild the UI action list for the active armature while keeping choices."""
+    CRM_Properties = scene.CRM_Properties
+    action_selections = CRM_Properties.actionSelections
+
+    if armature is None or armature.type != 'ARMATURE':
+        clear_action_selections(action_selections)
+        CRM_Properties.actionSelectionOwner = ""
+        return []
+
+    assignments = collect_armature_action_assignments(armature)
+    owner_name = armature.name_full
+    preserve_state = CRM_Properties.actionSelectionOwner == owner_name
+    previous_selection = {}
+
+    if preserve_state:
+        previous_selection = {
+            item.identifier: item.selected for item in action_selections
+        }
+
+    clear_action_selections(action_selections)
+
+    for assignment in assignments:
+        item = action_selections.add()
+        item.identifier = get_action_assignment_identifier(
+            assignment.action,
+            assignment.slot,
+        )
+        item.action_name = assignment.action.name_full
+        item.slot_identifier = (
+            assignment.slot.identifier if assignment.slot is not None else ""
+        )
+        item.display_name = get_action_assignment_display_name(
+            assignment.action,
+            assignment.slot,
+        )
+        item.source_label = assignment.label
+        item.selected = previous_selection.get(item.identifier, True)
+
+    CRM_Properties.actionSelectionOwner = owner_name
+    return assignments
+
+
+def get_selected_action_assignments(
+    scene: Any,
+    armature: Object,
+    action_assignments: Optional[List[ActionAssignment]] = None,
+) -> List[ActionAssignment]:
+    """Return only the armature actions that are checked in the UI."""
+    if action_assignments is None:
+        action_assignments = sync_action_selection_state(scene, armature)
+
+    selected_identifiers = {
+        item.identifier
+        for item in scene.CRM_Properties.actionSelections
+        if item.selected
+    }
+
+    return [
+        assignment
+        for assignment in action_assignments
+        if get_action_assignment_identifier(
+            assignment.action,
+            assignment.slot,
+        ) in selected_identifiers
+    ]
 
 
 def store_armature_animation_state(armature: Object) -> Dict[str, Any]:
