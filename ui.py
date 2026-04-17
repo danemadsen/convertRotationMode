@@ -54,7 +54,7 @@ class VIEW3D_PT_convert_rotation_mode(Panel):
         if armature is None:
             action_box.label(text="Select an armature to list its actions.")
         elif not action_assignments:
-            action_box.label(text="No attached actions found.", icon="ERROR")
+            action_box.label(text="No actions found in this file.", icon="ERROR")
         else:
             for assignment in action_assignments:
                 identifier = get_action_assignment_identifier(

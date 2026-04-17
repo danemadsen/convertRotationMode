@@ -46,7 +46,7 @@ class CRM_Props(PropertyGroup):
     selectedActions: EnumProperty(
         name="Actions To Convert",
         description=(
-            "Choose which attached actions to convert. "
+            "Choose which listed actions to convert. "
             "If none are checked, Convert! will use all listed actions."
         ),
         items=get_action_enum_items,

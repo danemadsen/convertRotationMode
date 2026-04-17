@@ -111,6 +111,17 @@ def action_slot_targets_armature(
     return False
 
 
+def iter_action_slots(action: Action) -> Iterable[Optional[ActionSlot]]:
+    """Yield action slots, or None when an action has no explicit slots."""
+    slots = getattr(action, "slots", None)
+    if slots is None or len(slots) == 0:
+        yield None
+        return
+
+    for slot in slots:
+        yield slot
+
+
 def get_list_frames_from_action(
     action: Optional[Action],
     slot: Optional[ActionSlot]
@@ -169,7 +180,7 @@ def iter_nla_strips(strips: Iterable[Any]) -> Iterable[Any]:
 
 
 def collect_armature_action_assignments(armature: Object) -> List[ActionAssignment]:
-    """Collect unique actions that are attached to an armature."""
+    """Collect actions for the picker, prioritizing attached ones first."""
     ad = armature.animation_data
     assignments: List[ActionAssignment] = []
     seen = set()
@@ -203,13 +214,15 @@ def collect_armature_action_assignments(armature: Object) -> List[ActionAssignme
                 )
 
     for action in bpy.data.actions:
-        slots = getattr(action, "slots", None)
-        if slots is None:
-            continue
-
-        for slot in slots:
-            if action_slot_targets_armature(slot, armature):
+        for slot in iter_action_slots(action):
+            if slot is not None and action_slot_targets_armature(slot, armature):
                 add_assignment(action, slot, "Action slot linked to armature")
+                continue
+
+            if getattr(action, "use_fake_user", False):
+                add_assignment(action, slot, "Fake user action")
+            else:
+                add_assignment(action, slot, "Available action")
 
     return assignments
 

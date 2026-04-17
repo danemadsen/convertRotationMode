@@ -27,7 +27,7 @@ class CRM_OT_convert_rotation_mode(Operator):
     bl_label = "Convert Rotation Mode"
     bl_description = (
         "Convert the selected bones' rotation mode on the checked actions "
-        "attached to the armature."
+        "from the action list."
     )
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -56,7 +56,7 @@ class CRM_OT_convert_rotation_mode(Operator):
         )
 
         if not action_assignments:
-            self.report({"WARNING"}, "No actions are attached to this armature.")
+            self.report({"WARNING"}, "No actions are available to convert.")
             return {'CANCELLED'}
 
         selected_action_assignments = get_selected_action_assignments(
